@@ -2,6 +2,8 @@ import express from 'express'
 import { Server } from "socket.io"
 import path from 'path'
 import { fileURLToPath } from 'url'
+import pkg from 'pg';
+const { Pool } = pkg;
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -10,6 +12,14 @@ const PORT = process.env.PORT || 3500
 const ADMIN = "Admin"
 
 const app = express()
+
+const pool = new Pool({
+    user: "postgres",
+    host: "localhost",
+    database: "world",
+    password: "1234",
+    port: 5432,
+})
 
 app.use(express.static(path.join(__dirname, "public")))
 
@@ -30,6 +40,8 @@ const io = new Server(expressServer, {
         origin: process.env.NODE_ENV === "production" ? false : ["http://localhost:5500", "http://127.0.0.1:5500"]
     }
 })
+
+
 
 io.on('connection', socket => {
     console.log(`User ${socket.id} connected`)
@@ -111,6 +123,16 @@ io.on('connection', socket => {
             socket.broadcast.to(room).emit('activity', name)
         }
     })
+
+    socket.on('message', ({ name, text }) => {
+        const room = getUser(socket.id)?.room;
+        if (room) {
+            io.to(room).emit('message', buildMsg(name, text));
+            
+            // Save the message to the database
+            saveMessageToDB(name, room, text);
+        }
+    });
 })
 
 function buildMsg(name, text) {
@@ -122,6 +144,19 @@ function buildMsg(name, text) {
             minute: 'numeric',
             second: 'numeric'
         }).format(new Date())
+    }
+}
+
+async function saveMessageToDB(senderName, room, messageText) {
+    try {
+        const client = await pool.connect();
+        const queryText = 'INSERT INTO messages (sender_name, room, message) VALUES ($1, $2, $3)';
+        const values = [senderName, room, messageText];
+        await client.query(queryText, values);
+        client.release();
+        console.log('Message saved to database');
+    } catch (error) {
+        console.error('Error saving message to database:', error);
     }
 }
 
